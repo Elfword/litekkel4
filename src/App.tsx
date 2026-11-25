@@ -194,6 +194,13 @@ if (window.location.pathname === '/faq') {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 print:min-h-0 print:bg-white">
+      {/* Tombol Pintasan ke FAQ */}
+      <a
+        href="/faq"
+        className="fixed bottom-24 right-6 bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 z-50 flex item-centre gap-2 no-print"
+      >
+        <span> Bantuan / FAQ</span>
+      </a>
       <Navbar
         lang={lang}
         onLanguageChange={setLang}
