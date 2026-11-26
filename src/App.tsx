@@ -20,6 +20,7 @@ import { CustomerTable } from './components/CustomerTable';
 import { DigitalARCardModal } from './components/DigitalARCardModal';
 import { AddCustomerModal } from './components/AddCustomerModal';
 import { ReceiptModal } from './components/ReceiptModal';
+import Faq from './components/Faq';
 
 const STORAGE_KEY_CUSTOMERS = 'litekai_ar_customers_v1';
 const STORAGE_KEY_LANG = 'litekai_ar_lang_v1';
@@ -177,8 +178,29 @@ export function App() {
     setActiveReceipt({ customer, payment });
   };
 
+  
+  // --- PINTU MASUK HALAMAN FAQ ---
+if (window.location.pathname === '/faq') {
+  return (
+    <div className="min-h-screen bg-slate-50 p-8">
+      <a href="/" className="inline-block mb-6 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+        &larr; Kembali ke Beranda
+      </a>
+      <Faq />
+    </div>
+  );
+}
+// -------------------------------
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 print:min-h-0 print:bg-white">
+      {/* Tombol Pintasan ke FAQ */}
+      <a
+        href="/faq"
+        className="fixed bottom-24 right-6 bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 z-50 flex item-centre gap-2 no-print"
+      >
+        <span> Bantuan / FAQ</span>
+      </a>
       <Navbar
         lang={lang}
         onLanguageChange={setLang}
