@@ -1,25 +1,48 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
+  Banknote,
   Building2,
   Calendar,
   CheckCircle2,
   CreditCard,
+  Download,
+  Eye,
+  FilePlus2,
+  FileText,
+  Gauge,
+  Landmark,
   MapPin,
   MessageCircle,
+  Pencil,
   Phone,
   Printer,
+  ShieldCheck,
   Sparkles,
+  Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
-import { CustomerAR, Language, PaymentMethod, PaymentRecord, RecordPaymentInput } from '../types';
+import {
+  CustomerAR,
+  Language,
+  PaymentMethod,
+  PaymentRecord,
+  RecordPaymentInput,
+  UserRole,
+} from '../types';
 import { TranslationDictionary } from '../i18n/translations';
 import {
   computeCustomerStatus,
+  getCreditLimitUsage,
+  getCustomerInvoices,
   getNextInstallmentNumber,
   getPaymentProgressPercent,
   getRemainingBalance,
   getSuggestedInstallmentAmount,
   getTotalPaid,
+  isTransferPaymentMethod,
 } from '../utils/arCalculations';
 import {
   addMonthsSafe,
@@ -33,29 +56,48 @@ import { StatusBadge } from './StatusBadge';
 
 interface DigitalARCardModalProps {
   customer: CustomerAR;
+  allCustomers: CustomerAR[];
   initialShowPaymentForm: boolean;
   lang: Language;
+  userRole: UserRole;
   t: TranslationDictionary;
   onClose: () => void;
+  onSwitchInvoice: (invoice: CustomerAR) => void;
+  onAddInvoiceForCustomer: (customer: CustomerAR) => void;
   onRecordPayment: (customerId: string, input: RecordPaymentInput) => void;
   onPrintReceipt: (customer: CustomerAR, payment: PaymentRecord) => void;
+  onDownloadInvoice: (customer: CustomerAR) => void;
+  onEditCustomer: (customer: CustomerAR) => void;
+  onDeleteCustomer: (customerId: string) => void;
 }
 
 export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
   customer,
+  allCustomers,
   initialShowPaymentForm,
   lang,
+  userRole,
   t,
   onClose,
+  onSwitchInvoice,
+  onAddInvoiceForCustomer,
   onRecordPayment,
   onPrintReceipt,
+  onDownloadInvoice,
+  onEditCustomer,
+  onDeleteCustomer,
 }) => {
+  const isId = lang === 'id';
   const [showPaymentForm, setShowPaymentForm] = useState(initialShowPaymentForm);
   const [amountInput, setAmountInput] = useState('');
   const [dateInput, setDateInput] = useState(toISODate(getTodayDate()));
-  const [methodInput, setMethodInput] = useState<PaymentMethod>('bank_transfer');
+  const [methodInput, setMethodInput] = useState<PaymentMethod>('cash');
   const [notesInput, setNotesInput] = useState('');
+  const [transferProofDataUrl, setTransferProofDataUrl] = useState<string | undefined>(undefined);
+  const [transferProofName, setTransferProofName] = useState<string | undefined>(undefined);
   const [formError, setFormError] = useState<string | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [previewProof, setPreviewProof] = useState<{ name: string; dataUrl?: string } | null>(null);
 
   useEffect(() => {
     const status = computeCustomerStatus(customer);
@@ -64,8 +106,10 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
     const suggested = getSuggestedInstallmentAmount(customer);
     setAmountInput(suggested > 0 ? String(suggested) : '');
     setDateInput(toISODate(getTodayDate()));
-    setMethodInput('bank_transfer');
+    setMethodInput('cash');
     setNotesInput('');
+    setTransferProofDataUrl(undefined);
+    setTransferProofName(undefined);
     setFormError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [customer.id, initialShowPaymentForm]);
@@ -76,7 +120,10 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
   const progress = getPaymentProgressPercent(customer);
   const nextInstallment = getNextInstallmentNumber(customer);
   const suggestedAmount = getSuggestedInstallmentAmount(customer);
+  const siblingInvoices = getCustomerInvoices(allCustomers, customer.customerId);
+  const limitUsage = getCreditLimitUsage(customer, allCustomers);
 
+  const isTransfer = isTransferPaymentMethod(methodInput);
   const parsedAmount = Number(amountInput.replace(/[^\d]/g, '')) || 0;
   const projectedRemaining = Math.max(0, remaining - parsedAmount);
   const projectedNextDue =
@@ -87,24 +134,50 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
   const waUrl =
     customer.nextDueDate && status !== 'paid_off'
       ? buildWhatsAppReminderUrl({
-        phone: customer.phone,
-        customerName: customer.name,
-        installmentNumber: nextInstallment,
-        totalInstallments: customer.installmentCount,
-        amountDue: suggestedAmount,
-        dueDateISO: customer.nextDueDate,
-        creditDescription: customer.creditDescription,
-        lang,
-        isOverdue: status === 'overdue',
-      })
+          phone: customer.phone,
+          customerName: customer.name,
+          installmentNumber: nextInstallment,
+          totalInstallments: customer.installmentCount,
+          amountDue: suggestedAmount,
+          dueDateISO: customer.nextDueDate,
+          creditDescription: customer.creditDescription,
+          lang,
+          isOverdue: status === 'overdue',
+        })
       : null;
 
   const handleOpenPaymentForm = () => {
     setAmountInput(String(suggestedAmount));
     setDateInput(toISODate(getTodayDate()));
+    setMethodInput('cash');
     setNotesInput('');
+    setTransferProofDataUrl(undefined);
+    setTransferProofName(undefined);
     setFormError(null);
     setShowPaymentForm(true);
+  };
+
+  const handleProofFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      setFormError(
+        isId
+          ? 'Ukuran file bukti transfer maksimal 4 MB.'
+          : 'Transfer proof file must be under 4 MB.'
+      );
+      return;
+    }
+    setTransferProofName(file.name);
+    setFormError(null);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setTransferProofDataUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmitPayment = (e: React.FormEvent) => {
@@ -117,12 +190,22 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
       setFormError(t.paymentForm.errorExceedsBalance);
       return;
     }
+    if (isTransfer && !transferProofName) {
+      setFormError(
+        isId
+          ? 'Wajib lampirkan bukti transfer (gambar/PDF) untuk metode Transfer sebelum menyimpan & mencetak kwitansi.'
+          : 'Transfer proof (image/PDF) is required for Transfer payments before saving and printing the receipt.'
+      );
+      return;
+    }
     setFormError(null);
     onRecordPayment(customer.id, {
       amount: parsedAmount,
       date: dateInput || toISODate(getTodayDate()),
       method: methodInput,
       notes: notesInput,
+      transferProofDataUrl: isTransfer ? transferProofDataUrl : undefined,
+      transferProofName: isTransfer ? transferProofName : undefined,
     });
     setShowPaymentForm(false);
   };
@@ -144,34 +227,110 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
           <span>{t.arCard.backToDashboard}</span>
         </button>
 
-        {status !== 'paid_off' && (
-          <div className="flex flex-wrap items-center gap-2.5">
-            {waUrl && (
-              <a
-                href={waUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-600 hover:text-white"
-              >
-                <MessageCircle className="h-4 w-4" />
-                <span>{t.arCard.sendWhatsAppBtn}</span>
-              </a>
-            )}
-            {!showPaymentForm && (
-              <button
-                type="button"
-                onClick={handleOpenPaymentForm}
-                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm shadow-blue-600/20 transition-colors hover:bg-blue-700"
-              >
-                <CreditCard className="h-4 w-4" />
-                <span>{t.arCard.recordPaymentBtn}</span>
-              </button>
-            )}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onDownloadInvoice(customer)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-600 hover:text-white"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>{isId ? 'Download Invoice' : 'Download Invoice'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onEditCustomer(customer)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            <span>{isId ? 'Edit Data' : 'Edit Data'}</span>
+          </button>
+
+          {userRole === 'super_admin' && (
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 transition-colors hover:bg-rose-600 hover:text-white"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isId ? 'Hapus' : 'Delete'}</span>
+            </button>
+          )}
+
+          {status !== 'paid_off' && waUrl && (
+            <a
+              href={waUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-600 hover:text-white"
+            >
+              <MessageCircle className="h-3.5 w-3.5" />
+              <span>{t.arCard.sendWhatsAppBtn}</span>
+            </a>
+          )}
+
+          {status !== 'paid_off' && !showPaymentForm && (
+            <button
+              type="button"
+              onClick={handleOpenPaymentForm}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm shadow-blue-600/20 transition-colors hover:bg-blue-700"
+            >
+              <CreditCard className="h-4 w-4" />
+              <span>{t.arCard.recordPaymentBtn}</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Customer Profile & Credit Header Card */}
+      {/* Multi-Invoice Switcher Bar for Same Customer */}
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/90 bg-white px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            {isId
+              ? `Daftar Invoice ${customer.name} (${siblingInvoices.length}):`
+              : `${customer.name}'s Invoices (${siblingInvoices.length}):`}
+          </span>
+          {siblingInvoices.map((inv, idx) => {
+            const invStatus = computeCustomerStatus(inv);
+            const active = inv.id === customer.id;
+            return (
+              <button
+                key={inv.id}
+                type="button"
+                onClick={() => onSwitchInvoice(inv)}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all ${
+                  active
+                    ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-300 hover:bg-blue-50/40'
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span>
+                  #{idx + 1} {inv.contractCode}
+                </span>
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                    active ? 'bg-white/20 text-white' : 'bg-white text-slate-600'
+                  }`}
+                >
+                  {t.statuses[invStatus]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onAddInvoiceForCustomer(customer)}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 transition-colors hover:bg-blue-600 hover:text-white"
+        >
+          <FilePlus2 className="h-3.5 w-3.5" />
+          <span>{isId ? '+ Tambah Invoice Baru' : '+ Add New Invoice'}</span>
+        </button>
+      </section>
+
+      {/* Customer Profile, Financial Summary & Credit Limit Card */}
       <section className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm">
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
           <div>
@@ -244,8 +403,9 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
               {t.arCard.remainingBalance}
             </div>
             <div
-              className={`mt-1.5 tabular-nums text-xl font-extrabold ${remaining === 0 ? 'text-sky-700' : 'text-slate-900'
-                }`}
+              className={`mt-1.5 tabular-nums text-xl font-extrabold ${
+                remaining === 0 ? 'text-sky-700' : 'text-slate-900'
+              }`}
             >
               {formatIDR(remaining)}
             </div>
@@ -265,18 +425,104 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
           </div>
         </div>
 
-        {/* Progress Bar */}
-        <div className="mt-5">
+        {/* Credit Limit Management Bar (Julie) */}
+        <div
+          className={`mt-4 rounded-xl border p-4 ${
+            limitUsage.isOverLimit
+              ? 'border-rose-200 bg-rose-50/70'
+              : limitUsage.isNearLimit
+                ? 'border-amber-200 bg-amber-50/60'
+                : 'border-slate-200 bg-slate-50/60'
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Gauge
+                className={`h-4 w-4 ${
+                  limitUsage.isOverLimit
+                    ? 'text-rose-600'
+                    : limitUsage.isNearLimit
+                      ? 'text-amber-600'
+                      : 'text-blue-600'
+                }`}
+              />
+              <span className="text-xs font-extrabold uppercase tracking-wide text-slate-700">
+                {isId ? 'Manajemen Limit Kredit' : 'Credit Limit Management'}
+              </span>
+              {limitUsage.isOverLimit && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                  <AlertTriangle className="h-3 w-3" />
+                  OVER LIMIT ({limitUsage.utilizationPercent}%)
+                </span>
+              )}
+              {limitUsage.isNearLimit && (
+                <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                  {isId ? 'Mendekati Limit' : 'Near Limit'} ({limitUsage.utilizationPercent}%)
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onEditCustomer(customer)}
+              className="text-xs font-bold text-blue-700 hover:underline"
+            >
+              {isId ? 'Atur Limit Kredit' : 'Adjust Credit Limit'}
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 text-xs sm:grid-cols-3">
+            <div>
+              <span className="text-slate-500">{isId ? 'Limit Kredit:' : 'Credit Limit:'}</span>{' '}
+              <strong className="tabular-nums text-slate-900">{formatIDR(customer.creditLimit)}</strong>
+            </div>
+            <div>
+              <span className="text-slate-500">
+                {isId
+                  ? `Terpakai (${limitUsage.invoiceCount} Invoice):`
+                  : `Used (${limitUsage.invoiceCount} Invoices):`}
+              </span>{' '}
+              <strong className="tabular-nums text-slate-900">{formatIDR(limitUsage.used)}</strong>
+            </div>
+            <div>
+              <span className="text-slate-500">{isId ? 'Sisa Limit Tersedia:' : 'Available Limit:'}</span>{' '}
+              <strong
+                className={`tabular-nums ${
+                  limitUsage.isOverLimit ? 'text-rose-700' : 'text-emerald-700'
+                }`}
+              >
+                {formatIDR(limitUsage.available)}
+              </strong>
+            </div>
+          </div>
+
+          <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-white/90 ring-1 ring-slate-200/80">
+            <div
+              className={`h-full rounded-full transition-all ${
+                limitUsage.isOverLimit
+                  ? 'bg-rose-500'
+                  : limitUsage.isNearLimit
+                    ? 'bg-amber-500'
+                    : 'bg-blue-600'
+              }`}
+              style={{ width: `${Math.min(100, limitUsage.utilizationPercent)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Repayment Progress Bar */}
+        <div className="mt-4">
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
-              className={`h-full rounded-full transition-all ${status === 'paid_off'
+              className={`h-full rounded-full transition-all ${
+                status === 'paid_off'
                   ? 'bg-sky-500'
                   : status === 'overdue'
                     ? 'bg-rose-500'
                     : status === 'due_tomorrow'
                       ? 'bg-amber-500'
                       : 'bg-emerald-500'
-                }`}
+              }`}
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -290,7 +536,7 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
         </div>
       </section>
 
-      {/* Auto-Installment Record Payment Form */}
+      {/* Auto-Installment Record Payment Form (with Kezia's Cash vs Transfer + Proof requirement) */}
       {showPaymentForm && status !== 'paid_off' && (
         <form
           onSubmit={handleSubmitPayment}
@@ -307,6 +553,7 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
           <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-12">
             {/* Inputs Column */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-7">
+              {/* Amount */}
               <div className="sm:col-span-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="text-xs font-bold text-slate-700">
@@ -351,6 +598,135 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
                 </p>
               </div>
 
+              {/* Payment Method Toggle: Cash vs Transfer (Kezia) */}
+              <div className="sm:col-span-2">
+                <label className="text-xs font-bold text-slate-700">
+                  {t.paymentForm.methodLabel}
+                </label>
+                <div className="mt-1.5 grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMethodInput('cash');
+                      setFormError(null);
+                    }}
+                    className={`flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-xs font-bold transition-all ${
+                      methodInput === 'cash'
+                        ? 'border-blue-600 bg-blue-50 text-blue-800 shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <Banknote className="h-4 w-4" />
+                    <span>{isId ? 'Tunai (Cash)' : 'Cash'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (methodInput === 'cash') setMethodInput('bank_transfer');
+                      setFormError(null);
+                    }}
+                    className={`flex items-center justify-center gap-2 rounded-xl border-2 px-4 py-2.5 text-xs font-bold transition-all ${
+                      isTransfer
+                        ? 'border-blue-600 bg-blue-50 text-blue-800 shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <Landmark className="h-4 w-4" />
+                    <span>{isId ? 'Transfer (TF / VA / QRIS)' : 'Transfer (Bank / VA / QRIS)'}</span>
+                  </button>
+                </div>
+
+                {isTransfer && (
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {(['bank_transfer', 'virtual_account', 'qris'] as PaymentMethod[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setMethodInput(m)}
+                        className={`rounded-lg px-3 py-1 text-[11px] font-bold transition-colors ${
+                          methodInput === m
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {t.paymentMethods[m]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Mandatory Transfer Proof Upload when Transfer is chosen */}
+              {isTransfer && (
+                <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50/70 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-1.5 text-xs font-extrabold text-amber-950">
+                      <Upload className="h-4 w-4 text-amber-700" />
+                      <span>
+                        {isId
+                          ? 'Lampiran Bukti Transfer (Wajib sebelum cetak kwitansi) *'
+                          : 'Transfer Proof Attachment (Required before printing receipt) *'}
+                      </span>
+                    </label>
+                    {transferProofName && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTransferProofDataUrl(undefined);
+                          setTransferProofName(undefined);
+                        }}
+                        className="text-[11px] font-bold text-rose-600 hover:underline"
+                      >
+                        {isId ? 'Hapus' : 'Remove'}
+                      </button>
+                    )}
+                  </div>
+
+                  {!transferProofName ? (
+                    <label className="mt-2.5 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-amber-300 bg-white/90 px-4 py-4 text-center transition-colors hover:border-blue-400 hover:bg-blue-50/30">
+                      <Upload className="h-5 w-5 text-amber-600" />
+                      <span className="mt-1.5 text-xs font-bold text-slate-800">
+                        {isId
+                          ? 'Klik untuk unggah foto/screenshot bukti transfer'
+                          : 'Click to upload transfer proof image or PDF'}
+                      </span>
+                      <span className="mt-0.5 text-[11px] text-slate-500">
+                        JPG, PNG, WEBP, PDF (max 4 MB)
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={handleProofFileChange}
+                        className="hidden"
+                      />
+                    </label>
+                  ) : (
+                    <div className="mt-2.5 flex items-center gap-3 rounded-xl border border-emerald-200 bg-white p-2.5">
+                      {transferProofDataUrl && transferProofDataUrl.startsWith('data:image/') ? (
+                        <img
+                          src={transferProofDataUrl}
+                          alt={transferProofName}
+                          className="h-12 w-12 rounded-lg object-cover ring-1 ring-slate-200"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                          <ShieldCheck className="h-5 w-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-bold text-slate-900">
+                          {transferProofName}
+                        </div>
+                        <div className="text-[11px] font-semibold text-emerald-700">
+                          ✓ {isId ? 'Bukti transfer siap diverifikasi' : 'Transfer proof attached'}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-bold text-slate-700">
                   {t.paymentForm.dateLabel}
@@ -365,22 +741,6 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700">
-                  {t.paymentForm.methodLabel}
-                </label>
-                <select
-                  value={methodInput}
-                  onChange={(e) => setMethodInput(e.target.value as PaymentMethod)}
-                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs font-semibold text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="bank_transfer">{t.paymentMethods.bank_transfer}</option>
-                  <option value="virtual_account">{t.paymentMethods.virtual_account}</option>
-                  <option value="qris">{t.paymentMethods.qris}</option>
-                  <option value="cash">{t.paymentMethods.cash}</option>
-                </select>
-              </div>
-
-              <div className="sm:col-span-2">
                 <label className="text-xs font-bold text-slate-700">
                   {t.paymentForm.notesLabel}
                 </label>
@@ -406,8 +766,9 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
                       {t.paymentForm.newRemainingLabel}
                     </span>
                     <span
-                      className={`tabular-nums text-base font-extrabold ${projectedRemaining === 0 ? 'text-sky-700' : 'text-slate-900'
-                        }`}
+                      className={`tabular-nums text-base font-extrabold ${
+                        projectedRemaining === 0 ? 'text-sky-700' : 'text-slate-900'
+                      }`}
                     >
                       {formatIDR(projectedRemaining)}
                     </span>
@@ -430,6 +791,13 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
                     • {t.paymentForm.partialPaymentNotice}
                   </p>
                 )}
+                {isTransfer && !transferProofName && (
+                  <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
+                    {isId
+                      ? 'Lampirkan bukti transfer terlebih dahulu untuk mengaktifkan tombol cetak kwitansi.'
+                      : 'Attach transfer proof first to enable receipt printing.'}
+                  </p>
+                )}
                 {formError && (
                   <p className="mt-3 text-xs font-semibold text-rose-600">{formError}</p>
                 )}
@@ -445,7 +813,8 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700"
+                  disabled={isTransfer && !transferProofName}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   <Printer className="h-4 w-4" />
                   <span>{t.paymentForm.submitBtn}</span>
@@ -456,7 +825,7 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
         </form>
       )}
 
-      {/* Chronological Payment History Table (Full-Width, Zero Horizontal Scrollbar) */}
+      {/* Chronological Payment History Table */}
       <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h3 className="text-base font-bold text-slate-900">{t.arCard.paymentHistoryTitle}</h3>
@@ -471,7 +840,6 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
           </div>
         ) : (
           <>
-            {/* Desktop Full-Width Table */}
             <div className="hidden md:block">
               <table className="w-full table-auto border-collapse text-left text-xs">
                 <thead>
@@ -498,7 +866,24 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
                         {payment.receiptNo}
                       </td>
                       <td className="px-3 py-3.5 text-xs text-slate-600">
-                        <div>{t.paymentMethods[payment.method]}</div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span>{t.paymentMethods[payment.method]}</span>
+                          {payment.method !== 'cash' && payment.transferProofName && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewProof({
+                                  name: payment.transferProofName!,
+                                  dataUrl: payment.transferProofDataUrl,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-600/20 hover:bg-emerald-100"
+                            >
+                              <Eye className="h-3 w-3" />
+                              <span>{isId ? 'Bukti TF' : 'Proof'}</span>
+                            </button>
+                          )}
+                        </div>
                         {payment.notes && (
                           <div className="mt-0.5 text-[11px] text-slate-400">{payment.notes}</div>
                         )}
@@ -525,7 +910,6 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
               </table>
             </div>
 
-            {/* Mobile Card List */}
             <div className="divide-y divide-slate-100 md:hidden">
               {chronologicalPayments.map((payment) => (
                 <div key={payment.id} className="flex flex-col gap-2.5 p-4">
@@ -569,6 +953,96 @@ export const DigitalARCardModal: React.FC<DigitalARCardModalProps> = ({
           </>
         )}
       </section>
+
+      {/* Transfer Proof Lightbox */}
+      {previewProof && (
+        <div
+          className="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewProof(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">
+                  {isId ? 'Lampiran Bukti Transfer' : 'Transfer Proof Attachment'}
+                </h4>
+                <p className="font-mono text-xs text-slate-500">{previewProof.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewProof(null)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4">
+              {previewProof.dataUrl && previewProof.dataUrl.startsWith('data:image/') ? (
+                <img
+                  src={previewProof.dataUrl}
+                  alt={previewProof.name}
+                  className="max-h-[60vh] w-full rounded-xl object-contain bg-slate-50"
+                />
+              ) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center text-xs text-emerald-900">
+                  <ShieldCheck className="mx-auto h-8 w-8 text-emerald-600" />
+                  <p className="mt-2 font-bold">{previewProof.name}</p>
+                  <p className="mt-1 text-emerald-700">
+                    {isId
+                      ? 'Bukti transfer telah terverifikasi pada sistem.'
+                      : 'Transfer proof has been verified in the system.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Customer Confirmation Modal */}
+      {confirmDeleteOpen && (
+        <div
+          className="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+          onClick={() => setConfirmDeleteOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-extrabold text-slate-900">
+              {isId ? 'Hapus Data Pelanggan?' : 'Delete Customer Record?'}
+            </h3>
+            <p className="mt-2 text-xs leading-relaxed text-slate-600">
+              {isId
+                ? `Anda yakin ingin menghapus ${customer.name} (${customer.contractCode}) beserta riwayat pembayarannya? Tindakan ini akan dicatat di Audit Trail.`
+                : `Are you sure you want to delete ${customer.name} (${customer.contractCode}) and its payment history? This action will be logged in the Audit Trail.`}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {isId ? 'Batal' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDeleteOpen(false);
+                  onDeleteCustomer(customer.id);
+                }}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700"
+              >
+                {isId ? 'Ya, Hapus Permanen' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

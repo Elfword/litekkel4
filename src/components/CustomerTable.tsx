@@ -11,6 +11,7 @@ import { ARStatus, CustomerAR, Language } from '../types';
 import { TranslationDictionary } from '../i18n/translations';
 import {
   computeCustomerStatus,
+  getCreditLimitUsage,
   getNextInstallmentNumber,
   getPaymentProgressPercent,
   getRemainingBalance,
@@ -29,6 +30,7 @@ type SortOption = 'priority' | 'due_date' | 'balance_desc' | 'name_asc';
 
 interface CustomerTableProps {
   customers: CustomerAR[];
+  allCustomers?: CustomerAR[];
   statusFilter: ARStatus | 'all';
   onStatusFilterChange: (filter: ARStatus | 'all') => void;
   onSelectCustomer: (customer: CustomerAR, autoOpenPayment?: boolean) => void;
@@ -38,12 +40,14 @@ interface CustomerTableProps {
 
 export const CustomerTable: React.FC<CustomerTableProps> = ({
   customers,
+  allCustomers,
   statusFilter,
   onStatusFilterChange,
   onSelectCustomer,
   lang,
   t,
 }) => {
+  const fullList = allCustomers ?? customers;
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('priority');
 
@@ -279,11 +283,27 @@ export const CustomerTable: React.FC<CustomerTableProps> = ({
                               .toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-bold text-slate-900 group-hover:text-blue-700">
-                              {customer.name}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-bold text-slate-900 group-hover:text-blue-700">
+                                {customer.name}
+                              </span>
+                              {(() => {
+                                const invCount = fullList.filter(
+                                  (c) => c.customerId === customer.customerId
+                                ).length;
+                                return invCount > 1 ? (
+                                  <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200">
+                                    {invCount} {lang === 'id' ? 'Invoice' : 'Inv'}
+                                  </span>
+                                ) : null;
+                              })()}
                             </div>
                             <div className="flex flex-wrap items-center gap-x-1.5 text-xs text-slate-500">
                               <span className="font-mono text-[11px]">{customer.contractCode}</span>
+                              <span>•</span>
+                              <span className="font-mono text-[10px] text-blue-600">
+                                @{customer.assignedAdminUsername}
+                              </span>
                               {customer.company && (
                                 <>
                                   <span>•</span>
@@ -335,11 +355,21 @@ export const CustomerTable: React.FC<CustomerTableProps> = ({
                         <div className="tabular-nums font-bold text-slate-900">
                           {formatIDR(remaining)}
                         </div>
-                        {status !== 'paid_off' && (
-                          <div className="mt-0.5 tabular-nums text-[11px] text-slate-500">
-                            {formatIDR(suggestedAmount)} {t.arCard.perMonth}
-                          </div>
-                        )}
+                        {(() => {
+                          const limitInfo = getCreditLimitUsage(customer, fullList);
+                          return (
+                            <div className="mt-0.5 flex items-center justify-end gap-1.5 text-[11px]">
+                              <span className="tabular-nums text-slate-500">
+                                Limit: {formatIDR(customer.creditLimit)}
+                              </span>
+                              {limitInfo.isOverLimit && (
+                                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-extrabold text-rose-700">
+                                  OVER
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       <td className="px-3 py-3.5 whitespace-nowrap">

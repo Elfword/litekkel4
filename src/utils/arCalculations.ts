@@ -63,6 +63,45 @@ export function getStatusSortWeight(status: ARStatus): number {
   }
 }
 
+export function getCustomerInvoices(
+  allCustomers: CustomerAR[],
+  customerId: string
+): CustomerAR[] {
+  return allCustomers.filter((c) => c.customerId === customerId);
+}
+
+export function getCreditLimitUsage(
+  customer: CustomerAR,
+  allCustomers?: CustomerAR[]
+): {
+  used: number;
+  available: number;
+  utilizationPercent: number;
+  isOverLimit: boolean;
+  isNearLimit: boolean;
+  invoiceCount: number;
+} {
+  const siblingInvoices = allCustomers
+    ? allCustomers.filter((c) => c.customerId === customer.customerId)
+    : [customer];
+  const used = siblingInvoices.reduce((sum, inv) => sum + getRemainingBalance(inv), 0);
+  const limit = Math.max(0, customer.creditLimit || 0);
+  const available = Math.max(0, limit - used);
+  const utilizationPercent = limit > 0 ? Math.round((used / limit) * 100) : 0;
+  return {
+    used,
+    available,
+    utilizationPercent,
+    isOverLimit: limit > 0 && used > limit,
+    isNearLimit: limit > 0 && utilizationPercent >= 80 && used <= limit,
+    invoiceCount: siblingInvoices.length,
+  };
+}
+
+export function isTransferPaymentMethod(method: RecordPaymentInput['method']): boolean {
+  return method !== 'cash';
+}
+
 /**
  * Record a new payment with automatic installment detection, remaining balance calculation,
  * next due date advancement (+1 month), and automatic paid-off transition when balance reaches 0.
@@ -86,6 +125,8 @@ export function recordCustomerPayment(
     remainingBalanceAfter: remainingAfter,
     method: input.method,
     notes: input.notes?.trim() || undefined,
+    transferProofDataUrl: input.transferProofDataUrl,
+    transferProofName: input.transferProofName,
   };
 
   let nextDueDate: string | null = null;

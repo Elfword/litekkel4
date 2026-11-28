@@ -160,9 +160,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
               <div className="grid grid-cols-1 gap-1 py-2.5 sm:grid-cols-3 print:grid-cols-3 print:py-1.5">
                 <span className="font-semibold text-slate-500">{t.receipt.paymentMethod}</span>
-                <span className="font-semibold text-slate-900 sm:col-span-2 print:col-span-2">
-                  {t.paymentMethods[payment.method]}
-                </span>
+                <div className="flex flex-wrap items-center gap-2 sm:col-span-2 print:col-span-2">
+                  <span className="font-semibold text-slate-900">
+                    {t.paymentMethods[payment.method]}
+                  </span>
+                  {payment.method !== 'cash' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-600/20">
+                      ✓ {lang === 'id' ? 'Bukti Transfer Terverifikasi' : 'Transfer Proof Verified'}
+                      {payment.transferProofName ? ` (${payment.transferProofName})` : ''}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {payment.notes && (
